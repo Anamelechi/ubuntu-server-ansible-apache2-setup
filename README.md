@@ -32,11 +32,11 @@ This Ansible playbook automates the setup of an Ubuntu server with Apache2 web s
 ![](assets/ansible3.png)
 ![](assets/ansible4.png)
 ![](assets/ansible5.png)
-
+Zabbix Server Setup
 ![Zabbix Server Setup](assets/zabbix.png)
-
-![Grafana Interface](assets/ansible4.png)
-
+Grafana Interface
+![Grafana Interface](assets/grafana.png)
+System Overview
 ![System Overview](assets/overview.png)
 
 ## �🚀 Quick Start
