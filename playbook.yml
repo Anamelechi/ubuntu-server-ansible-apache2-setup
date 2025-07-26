@@ -1,0 +1,318 @@
+
+- name: Setup Apache2 Server with Monitoring
+  hosts: Ubuntu_server
+  become: yes
+  vars:
+    apache_port: 80
+    zabbix_version: "6.0"
+    zabbix_server_name: "System Monitoring Server"
+    zabbix_server_db: "zabbix"
+    zabbix_server_db_user: "lenovo_zabbix"
+    zabbix_server_db_password: "lenovo_zabbix_password"  # Change this in production
+    grafana_version: "9.5.2"
+    # Port configuration for services
+    zabbix_server_port: 10051
+    zabbix_agent_port: 10050
+    grafana_port: 3000
+    mysql_port: 3306
+    
+  tasks:
+    # Update system packages
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      apt:
+        upgrade: dist
+        autoremove: yes
+
+    # Install required packages
+    - name: Install Apache2 and dependencies
+      apt:
+        name:
+          - apache2
+          - git
+          - curl
+          - wget
+          - unzip
+        state: present
+
+    # Configure Apache2
+    - name: Enable Apache2 service
+      systemd:
+        name: apache2
+        enabled: yes
+        state: started
+
+    - name: Configure Apache2 to listen on port 80
+      lineinfile:
+        path: /etc/apache2/ports.conf
+        regexp: '^Listen 80'
+        line: 'Listen 80'
+        backup: yes
+
+    # Setup website
+    - name: Remove default Apache2 index page
+      file:
+        path: /var/www/html/index.html
+        state: absent
+
+    - name: Copy website files to Apache document root
+      copy:
+        src: website/
+        dest: /var/www/html/
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: Set proper permissions for web directory
+      file:
+        path: /var/www/html
+        owner: www-data
+        group: www-data
+        recurse: yes
+
+    - name: Enable Apache2 modules
+      apache2_module:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - rewrite
+        - ssl
+        - headers
+      notify: restart apache2
+
+    - name: Test Apache2 configuration
+      command: apache2ctl configtest
+      register: apache_config_test
+      changed_when: false
+
+    - name: Display Apache2 config test result
+      debug:
+        var: apache_config_test.stdout_lines
+
+    # Install and Configure Zabbix Server
+    - name: Install MySQL Server and Python MySQL module
+      apt:
+        name: 
+          - mysql-server
+          - python3-pymysql
+        state: present
+
+    - name: Start MySQL Service
+      systemd:
+        name: mysql
+        state: started
+        enabled: yes
+
+    - name: Update MySQL root password
+      mysql_user:
+        name: root
+        host: localhost
+        password: "{{ zabbix_server_db_password }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+        state: present
+
+    - name: Create MySQL config file
+      template:
+        src: templates/my.cnf.j2
+        dest: /root/.my.cnf
+        mode: '0600'
+
+    - name: Create Zabbix Database
+      mysql_db:
+        name: "{{ zabbix_server_db }}"
+        state: present
+
+    - name: Create Zabbix Database User
+      mysql_user:
+        name: "{{ zabbix_server_db_user }}"
+        password: "{{ zabbix_server_db_password }}"
+        priv: "{{ zabbix_server_db }}.*:ALL"
+        state: present
+
+    - name: Grant SUPER privilege to Zabbix user
+      mysql_query:
+        login_user: root
+        login_password: "{{ zabbix_server_db_password }}"
+        query: "GRANT SUPER ON *.* TO '{{ zabbix_server_db_user }}'@'localhost';"
+
+    - name: Configure MySQL settings
+      mysql_variables:
+        variable: "{{ item.var }}"
+        value: "{{ item.value }}"
+        login_user: root
+        login_password: "{{ zabbix_server_db_password }}"
+      loop:
+        - { var: 'log_bin_trust_function_creators', value: '1' }
+        - { var: 'innodb_strict_mode', value: '0' }
+
+    - name: Get Ubuntu version codename
+      command: lsb_release -cs
+      register: ubuntu_codename
+      changed_when: false
+
+    - name: Install required packages for HTTPS transport
+      apt:
+        name: apt-transport-https
+        state: present
+        update_cache: yes
+
+    - name: Add Zabbix Repository Key
+      apt_key:
+        url: http://repo.zabbix.com/zabbix-official-repo.key
+        state: present
+      register: add_key
+      until: add_key is success
+      retries: 5
+      delay: 10
+      ignore_errors: yes
+
+    - name: Add Zabbix Repository Key (alternative method)
+      shell: |
+        wget -q -O- http://repo.zabbix.com/zabbix-official-repo.key | apt-key add -
+      when: add_key is failed
+      
+    - name: Add Zabbix Repository
+      apt_repository:
+        repo: "deb http://repo.zabbix.com/zabbix/{{ zabbix_version }}/ubuntu {{ ubuntu_codename.stdout }} main"
+        state: present
+        update_cache: yes
+      register: add_repo
+      until: add_repo is success
+      retries: 5
+      delay: 10
+
+    - name: Install Zabbix Server and Web
+      apt:
+        name:
+          - zabbix-server-mysql
+          - zabbix-frontend-php 
+          - zabbix-apache-conf
+          - zabbix-sql-scripts
+          - zabbix-agent2
+        state: present
+        update_cache: yes
+
+    - name: Import Zabbix Schema
+      shell: |
+        zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uroot -p{{ zabbix_server_db_password }} {{ zabbix_server_db }}
+      args:
+        creates: /var/lib/mysql/{{ zabbix_server_db }}/acknowledges.ibd
+
+    - name: Verify MySQL permissions
+      mysql_query:
+        login_user: "{{ zabbix_server_db_user }}"
+        login_password: "{{ zabbix_server_db_password }}"
+        login_db: "{{ zabbix_server_db }}"
+        query: "SELECT 1;"
+      ignore_errors: yes
+      register: mysql_check
+
+    - name: Display MySQL connection test result
+      debug:
+        var: mysql_check
+
+    - name: Configure Zabbix Server
+      template:
+        src: templates/zabbix_server.conf.j2
+        dest: /etc/zabbix/zabbix_server.conf
+      notify: restart zabbix-server
+
+    - name: Ensure Zabbix server configuration is correct
+      lineinfile:
+        path: /etc/zabbix/zabbix_server.conf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^DBHost=', line: 'DBHost=localhost' }
+        - { regexp: '^DBName=', line: 'DBName={{ zabbix_server_db }}' }
+        - { regexp: '^DBUser=', line: 'DBUser={{ zabbix_server_db_user }}' }
+        - { regexp: '^DBPassword=', line: 'DBPassword={{ zabbix_server_db_password }}' }
+      notify: restart zabbix-server
+
+    # Install and Configure Grafana
+    - name: Add Grafana GPG Key
+      apt_key:
+        url: https://packages.grafana.com/gpg.key
+        state: present
+
+    - name: Add Grafana Repository
+      apt_repository:
+        repo: "deb https://packages.grafana.com/oss/deb stable main"
+        state: present
+
+    - name: Install Grafana
+      apt:
+        name: grafana
+        state: present
+        update_cache: yes
+
+    - name: Configure Grafana Port
+      lineinfile:
+        path: /etc/grafana/grafana.ini
+        regexp: '^;http_port = 3000'
+        line: 'http_port = {{ grafana_port }}'
+        backup: yes
+
+    - name: Start Grafana Service
+      systemd:
+        name: grafana-server
+        state: started
+        enabled: yes
+
+    # Configure Zabbix Agent
+    - name: Configure Zabbix Agent
+      template:
+        src: templates/zabbix_agent2.conf.j2
+        dest: /etc/zabbix/zabbix_agent2.conf
+      notify: restart zabbix-agent
+
+    - name: Display setup completion message
+      debug:
+        msg: |
+          ==========================================
+          Setup Complete
+          ==========================================
+          
+          Service Ports Configuration:
+          - Apache2: port {{ apache_port }}
+          - Zabbix Server: port {{ zabbix_server_port }}
+          - Zabbix Agent: port {{ zabbix_agent_port }}
+          - Grafana: port {{ grafana_port }}
+          - MySQL: port {{ mysql_port }}
+          
+          Local Access URLs (before Cloudflare Tunnel setup):
+          - Website: http://localhost:{{ apache_port }}
+          - Zabbix: http://localhost/zabbix
+            Default credentials: Admin/zabbix
+          - Grafana: http://localhost:{{ grafana_port }}
+            Default credentials: admin/admin
+          
+          For Cloudflare Tunnel Configuration:
+          1. Install cloudflared manually
+          2. Create tunnels for each service using these local endpoints:
+             - Website: http://localhost:{{ apache_port }}
+             - Zabbix UI: http://localhost/zabbix
+             - Grafana: http://localhost:{{ grafana_port }}
+          
+          Please change default passwords after first login!
+          ==========================================
+
+  handlers:
+    - name: restart apache2
+      systemd:
+        name: apache2
+        state: restarted
+
+    - name: restart zabbix-server
+      systemd:
+        name: zabbix-server
+        state: restarted
+
+    - name: restart zabbix-agent
+      systemd:
+        name: zabbix-agent2
+        state: restarted

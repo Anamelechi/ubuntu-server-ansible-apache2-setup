@@ -1,0 +1,41 @@
+<?php
+// Zabbix GUI configuration file.
+global $DB;
+
+$DB['TYPE']     = 'MYSQL';
+$DB['SERVER']   = 'localhost';
+$DB['PORT']     = '3306';
+$DB['DATABASE'] = '{{ zabbix_server_db }}';
+$DB['USER']     = '{{ zabbix_server_db_user }}';
+$DB['PASSWORD'] = '{{ zabbix_server_db_password }}';
+
+// Schema name. Used for PostgreSQL.
+$DB['SCHEMA'] = '';
+
+// Used for TLS connection.
+$DB['ENCRYPTION'] = false;
+$DB['KEY_FILE']   = '';
+$DB['CERT_FILE']  = '';
+$DB['CA_FILE']    = '';
+$DB['VERIFY_HOST'] = false;
+$DB['CIPHER_LIST'] = '';
+
+// Vault configuration. Used if database credentials are stored in Vault secrets manager.
+$DB['VAULT']                  = '';
+$DB['VAULT_URL']             = '';
+$DB['VAULT_DB_PATH']         = '';
+$DB['VAULT_TOKEN']           = '';
+$DB['VAULT_CERT_FILE']       = '';
+$DB['VAULT_KEY_FILE']        = '';
+$DB['VAULT_CACHE_PATH']      = '';
+$DB['VAULT_CACHE_EXPIRY_TIME'] = '';
+
+// Use IEEE754 compatible value range for 64-bit Numeric (float) history values.
+// This option is enabled by default for new Zabbix installations.
+$DB['DOUBLE_IEEE754'] = true;
+
+$ZBX_SERVER      = 'localhost';
+$ZBX_SERVER_PORT = '{{ zabbix_server_port }}';
+$ZBX_SERVER_NAME = '{{ zabbix_server_name }}';
+
+$IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;
