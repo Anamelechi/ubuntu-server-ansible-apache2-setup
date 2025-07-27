@@ -61,7 +61,7 @@ System Overview
 
 4. Run the playbook:
    ```bash
-   ansible-playbook -i inventory.ini playbook.yml
+   ansible-playbook -i inventory.ini playbook.yml --ask-become-pass
    ```
 
 ## 🔐 Default Credentials
